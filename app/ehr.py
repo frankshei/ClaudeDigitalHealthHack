@@ -16,7 +16,7 @@ from typing import Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from .data import Chart, _clean, _d, _fmt
 from .fable_runs import Runs
@@ -703,7 +703,15 @@ def build_router(chart: Chart, store: Store | None = None) -> APIRouter:
         run = runs.get(rid)
         if not run:
             raise HTTPException(404, "Unknown run")
-        return JSONResponse({"status": run["status"], "text": run["text"]})
+        return JSONResponse({"status": run["status"], "text": run["text"],
+                             "frame": int(run["frame"].stat().st_mtime * 1000) if run["frame"].exists() else 0})
+
+    @r.get("/ehr/fable/{rid}/screen")
+    def fable_screen(rid: int):
+        run = runs.get(rid)
+        if not run or not run["frame"].exists():
+            raise HTTPException(404, "No screen yet")
+        return FileResponse(run["frame"], media_type="image/png", headers={"Cache-Control": "no-store"})
 
     @r.get("/ehr/fable/{rid}", response_class=HTMLResponse)
     def fable_run(rid: int, request: Request):
@@ -714,8 +722,12 @@ def build_router(chart: Chart, store: Store | None = None) -> APIRouter:
         body = (_flash(request)
                 + f"<p>Started {run['started']} for <b>{_x(h['name'])}</b> (MRN {h['mrn']}), referring to {_x(run['specialty'])}. "
                   f"<b id='st'></b></p>"
-                + "<p class='muted'>For about a minute Fable reads the chart images. Then a browser window opens and Fable "
-                  "works the EHR in it: watch, but don't click in that window.</p>"
+                + "<p class='muted'>For about a minute Fable reads the chart images. Then it works the EHR in its own "
+                  "browser, shown live below.</p>"
+                + "<div style='border:1px solid var(--line);border-radius:4px;background:#f4f6f9;max-width:960px;"
+                  "aspect-ratio:1280/800;display:flex;align-items:center;justify-content:center;overflow:hidden'>"
+                  "<span id='noscreen' class='muted'>Fable's screen appears here once it starts on the EHR.</span>"
+                  "<img id='screen' alt=\"Fable's browser screen\" style='display:none;width:100%;height:100%;object-fit:contain'></div>"
                 + "<p id='next' style='display:none'><a class='btn' href='/ehr/inbox'>Open the In basket to approve</a> "
                   f"<a href='/ehr/patients/{run['pid']}/referrals'>Back to the chart</a> · <a href='/tracker'>Referral Tracker</a></p>"
                 + f"<pre id='log' style='background:#0f1b2b;color:#dfe8f3;padding:10px 12px;border-radius:4px;"
@@ -723,13 +735,18 @@ def build_router(chart: Chart, store: Store | None = None) -> APIRouter:
                 + f"""<script>
 const LABEL = {{running: "Running…", finished: "Done. Fable's entries are waiting in the In basket.",
                failed: "Stopped with an error; see the end of the log."}};
+let shown = 0;
 async function tick() {{
   try {{
     const r = await (await fetch("/ehr/fable/{rid}/log")).json();
     const el = document.getElementById("log"), atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
     el.textContent = r.text; if (atEnd) el.scrollTop = el.scrollHeight;
     document.getElementById("st").textContent = LABEL[r.status];
-    if (r.status === "running") setTimeout(tick, 1500); else document.getElementById("next").style.display = "";
+    if (r.frame && r.frame !== shown) {{
+      shown = r.frame; const img = document.getElementById("screen");
+      img.src = "/ehr/fable/{rid}/screen?t=" + r.frame; img.style.display = ""; document.getElementById("noscreen").style.display = "none";
+    }}
+    if (r.status === "running") setTimeout(tick, 1000); else document.getElementById("next").style.display = "";
   }} catch (e) {{ setTimeout(tick, 3000); }}
 }}
 tick();

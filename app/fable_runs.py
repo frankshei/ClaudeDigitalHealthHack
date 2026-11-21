@@ -1,7 +1,9 @@
 """Runs of the Fable operator started from the EHR's Run Fable button.
 
-Each run is `python -m app.fable_operator ... --headed` in its own process, so its browser window
-opens on this machine. Its output goes to var/fable-runs/<id>.log, which the run page shows live.
+Each run is `python -m app.fable_operator ...` in its own process. Its output goes to
+var/fable-runs/<id>.log and its latest screen to <id>.png; the run page shows both live, so Fable
+can be watched from any browser. FABLE_HEADED=0 (for a server with no screen) skips the separate
+browser window that otherwise also opens on this machine.
 One run at a time: two operators driving the EHR at once would only get in each other's way.
 """
 from __future__ import annotations
@@ -34,12 +36,16 @@ class Runs:
             rid = max(self.runs, default=0) + 1
             log = self.dir / f"{int(time.time())}-{rid}.log"
             cmd = [sys.executable, "-u", "-m", "app.fable_operator", "--mrn", mrn, "--specialty", specialty,
-                   "--urgency", urgency, "--question", question, "--headed"]
+                   "--urgency", urgency, "--question", question]
+            if os.environ.get("FABLE_HEADED", "1") != "0":
+                cmd.append("--headed")
+            frame = log.with_suffix(".png")
             with open(log, "wb") as out:
                 proc = subprocess.Popen(cmd, cwd=ROOT, stdout=out, stderr=subprocess.STDOUT,
-                                        env={**os.environ, "EHR_URL": base_url, "PYTHONUNBUFFERED": "1"})
+                                        env={**os.environ, "EHR_URL": base_url, "PYTHONUNBUFFERED": "1",
+                                             "FABLE_LIVE_FRAME": str(frame)})
             self.runs[rid] = {"id": rid, "pid": pid, "mrn": mrn, "specialty": specialty, "proc": proc,
-                              "log": log, "started": time.strftime("%H:%M:%S")}
+                              "log": log, "frame": frame, "started": time.strftime("%H:%M:%S")}
             return rid
 
     def get(self, rid: int) -> dict | None:

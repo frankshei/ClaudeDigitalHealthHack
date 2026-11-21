@@ -38,6 +38,8 @@ MODEL = os.environ.get("OPERATOR_MODEL", "claude-fable-5-2")
 EFFORT = os.environ.get("OPERATOR_EFFORT", "high")
 BASE = os.environ.get("EHR_URL", "http://localhost:8000").rstrip("/")
 VIEWPORT = {"width": 1280, "height": 800}  # within the image limits, so screenshots need no scaling
+# Set by the EHR's Run Fable button: where to keep the latest screen for its live view.
+LIVE_FRAME = Path(os.environ["FABLE_LIVE_FRAME"]) if os.environ.get("FABLE_LIVE_FRAME") else None
 MAX_TURNS = int(os.environ.get("OPERATOR_MAX_TURNS", "40"))
 # Server-side refusal fallback, and progress notes between tool calls returned as short summaries.
 BETAS = ["server-side-fallback-2026-07-01", "thinking-display-updates-2026-08-18"]
@@ -149,8 +151,21 @@ class Browser:
                 if attempt == 2:
                     raise
                 self._wait_for_load()
+        self._frame(png)
         data = base64.standard_b64encode(png).decode()
         return [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": data}}]
+
+    def _frame(self, png: bytes | None = None) -> None:
+        """Writes what the browser shows to LIVE_FRAME, for the live view on the EHR's run page."""
+        if not LIVE_FRAME:
+            return
+        try:
+            png = png or self.page.screenshot(type="png", timeout=4000)
+            tmp = LIVE_FRAME.with_suffix(".tmp")
+            tmp.write_bytes(png)
+            tmp.replace(LIVE_FRAME)  # whole frames only: the page never reads a half-written file
+        except Exception:
+            pass  # the live view is a convenience; never let it stop the run
 
     def _wait_for_load(self) -> None:
         try:
@@ -186,6 +201,13 @@ class Browser:
             raise RuntimeError("That left the EHR, which this operator may not do. Returned to Patient lookup.")
 
     def run(self, name: str, inp: dict) -> str | list[dict]:
+        try:
+            return self._run(name, inp)
+        finally:
+            if name != "screenshot":
+                self._frame()
+
+    def _run(self, name: str, inp: dict) -> str | list[dict]:
         m, kb = self.page.mouse, self.page.keyboard
         clicks = {"left_click": ("left", 1), "right_click": ("right", 1), "middle_click": ("middle", 1),
                   "double_click": ("left", 2), "triple_click": ("left", 3)}

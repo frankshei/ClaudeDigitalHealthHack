@@ -28,9 +28,10 @@ The sections below are the same steps done by hand.
 ## One-click run from the EHR
 
 With the app running (`npm run dev`), sign in as Dana at http://localhost:8000/ehr/login, open a
-patient, go to the **Referrals** tab and press **Run Fable** under "Have Fable do it". A run page
-shows Fable's progress live while the browser window it drives opens on your screen. When it's done,
-the page links to the In basket to approve. One run at a time; the Fable operator itself can't
+patient, go to the **Referrals** tab and press **Run Fable** under "Have Fable do it". The run page
+shows Fable's screen and its progress notes live, so you can watch from any browser; a separate
+browser window also opens on the machine running the app (set `FABLE_HEADED=0` to skip it, e.g. on a
+server). When it's done, the page links to the In basket to approve. One run at a time; the Fable operator itself can't
 start a run.
 
 ## Quick start
