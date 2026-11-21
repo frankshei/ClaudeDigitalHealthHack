@@ -404,6 +404,42 @@ function agentTick() {
 }
 function advance(r, step, day = S.day) { r.step = step; r.at[step] = day; }
 
+/* ---------- referrals from the EHR ----------
+   Orders approved in Harborview EHR (for example one the Fable operator placed and Dana approved in the In basket) replace the
+   demo referral for that patient. Pending orders are not shown: until a person approves, the order is not real.
+   The sync only moves a referral forward; steps already taken here in the tracker are kept. */
+async function syncFromEhr() {
+  if (!DATA || !S) return;
+  let list;
+  try { list = await (await fetch('/api/tracker/ehr-referrals')).json(); } catch { return; }
+  let changed = false;
+  for (const e of list) {
+    if (!PTS[e.pid]) continue;
+    let r = S.refs[e.pid];
+    if (!r || r.ehrId !== e.id) {
+      r = seedRef(e.pid, 0, S.day, URG.includes(e.urgency) ? e.urgency : 'Routine');
+      r.ehrId = e.id; r.question = e.question; r.log = [];
+      log(r, e.entered_by_ai ? 'Fable operator (AI)' : e.entered_by, `Placed the referral order in the EHR (R-${e.id}).`);
+      log(r, e.approved_by, 'Approved the referral order in the EHR In basket.');
+      log(r, 'Agent', 'Opened the tracker and sent the patient a tracker link.');
+      S.refs[e.pid] = r; changed = true;
+    }
+    if (e.letter && r.step < 1 && r.letterId !== e.letter.id) {
+      r.packet = e.letter.body; r.packetBy = e.letter.by_ai ? 'claude' : 'person'; r.reviewed = r.pcpOk = true; r.letterId = e.letter.id;
+      advance(r, 1);
+      log(r, e.letter.approved_by, `Approved the referral letter in the EHR${e.letter.by_ai ? ' (drafted by the Fable operator from the chart images)' : ''}.`);
+      changed = true;
+    }
+    if (e.consult && r.step < 8) {
+      for (let i = r.step + 1; i <= 8; i++) r.at[i] = S.day;
+      r.step = 8; r.appt = r.appt ?? S.day; r.priority = r.priority || r.urgency; r.elig = true;
+      log(r, 'Agent', `Consult note filed in the EHR (${e.consult.title}). Loop closed.`);
+      changed = true;
+    }
+  }
+  if (changed) done();
+}
+
 function infoOpen(r) { return !!(r.info && !r.info.answer); }
 function needsDana(r) { return r.step <= 2 || (r.stalled && !r.nudged) || (r.noBook && !r.reminded) || infoOpen(r); }
 function danaStatus(r) {
@@ -668,7 +704,8 @@ function renderPCP(m) {
     fields([['Age / sex', `${p.age} y · ${p.sex[0].toUpperCase()}`], ['HbA1c, latest', a1cField(p)],
       ['Ordering provider', 'Dr. Patel'], ['Ordered', fmt(r.at[0])], ['Urgency (PCP)', r.urgency],
       r.priority && r.priority !== r.urgency ? ['Endo triage', r.priority] : null,
-      ['HMO referral #', r.refNo || 'Not requested'], ['Referral status', stamp(r, false, 'pcp')], ['Status date', fmt(r.at[r.step])]]));
+      ['HMO referral #', r.refNo || 'Not requested'], ['Referral status', stamp(r, false, 'pcp')], ['Status date', fmt(r.at[r.step])],
+      r.ehrId ? ['EHR order', h('a', { href: `/ehr/patients/${p.ehr}/referrals/${r.ehrId}`, target: '_blank', rel: 'noopener' }, `R-${r.ehrId}`)] : null]));
 
   if (S.adding) { m.append(h('div', { class: 'pcp' }, queue, newReferral())); return; }
   m.append(h('div', { class: 'pcp' }, queue,
@@ -826,7 +863,7 @@ document.querySelectorAll('.personas button').forEach(b => b.onclick = () => {
   $('main').querySelector('h1')?.focus({ preventScroll: true });
 });
 $('advance').onclick = () => { S.day++; agentTick(); pendingSay = pendingSay || `Demo day is now ${fmt(S.day)}.`; done(); };
-$('resetAll').onclick = () => { UNDO = JSON.stringify(S); const persona = S.persona; freshState(); S.persona = persona; pendingSay = 'Demo reset. Undo is available.'; done(); $('undoReset').focus(); };
+$('resetAll').onclick = () => { UNDO = JSON.stringify(S); const persona = S.persona; freshState(); S.persona = persona; pendingSay = 'Demo reset. Undo is available.'; done(); syncFromEhr(); $('undoReset').focus(); };
 $('undoReset').onclick = () => { if (!UNDO) return; S = JSON.parse(UNDO); UNDO = null; pendingSay = 'Reset undone.'; done(); $('resetAll').focus(); };
 $('ptPick').onchange = e => { S.ptSel = e.target.value; done(); };
 
@@ -835,6 +872,8 @@ fetch('/tracker/data.json').then(r => r.json()).then(d => {
   if (!load()) freshState();
   const v = location.hash.slice(1); if (VIEWS.includes(v)) S.persona = v;
   render();
+  syncFromEhr();
+  setInterval(() => { if (!document.hidden) syncFromEhr(); }, 4000);
 }).catch(() => { $('main').textContent = 'Could not load the patient data.'; });
 /* Claude runs on this app's server (/api/health says whether an API key is set); with no key the page makes labeled template drafts. */
 fetch('/api/health').then(r => r.json()).then(h => { sample = h.mode === 'live' || null; showMode(); if (DATA) render(); }, () => showMode());

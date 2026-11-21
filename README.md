@@ -40,7 +40,13 @@ npm run dev                           # starts the app at http://localhost:8000
    then open the **In basket** (http://localhost:8000/ehr/inbox) and approve both items.
 4. **Show the history**: the **Audit log** (http://localhost:8000/ehr/audit) shows what Fable
    proposed and what Dana approved.
-5. **Run it again**: on the audit log page, signed in as Dana, click **Reset demo data**.
+5. **Show the tracker**: open http://localhost:8000/tracker. Within a few seconds of Dana's
+   approval, the patient's referral there is the real EHR order (with an **EHR order** link),
+   at "Packet ready" with Fable's letter. Switch to the **Patient** view to see what the patient
+   sees. Filing a consult note for the referral in the EHR (Documents tab, signed in as Dana)
+   moves it to "Loop closed".
+6. **Run it again**: on the audit log page, signed in as Dana, click **Reset demo data**, then
+   **Reset demo** in the tracker.
 
 To see only the chart reading and the drafted referral: `npm run operator -- --mrn 76920746 --read-only`.
 Any patient works: find MRNs in the EHR's Patient lookup.
@@ -62,8 +68,8 @@ Any patient works: find MRNs in the EHR's Patient lookup.
   tested with scripted actions against the real EHR.
 - Not yet tried with the live model: the operator's computer-use phase with Fable 5.2 itself.
   If a run stumbles, keep the terminal output.
-- Not connected yet: a referral the operator places in the EHR does not appear in the Referral
-  Tracker; the tracker still runs its own demo referrals.
+- The tracker shows Endocrinology referrals approved in the EHR (approved orders only; pending
+  ones stay out of it). Other tracker patients keep their built-in demo referrals.
 
 ## Referral note drafter
 
@@ -161,6 +167,10 @@ patient views for a type 2 diabetes referral to endocrinology), served by this a
   status questions get an answer from the referral facts, everything else goes to a nurse.
 - With no API key, drafts are labeled templates and every patient message goes to a nurse.
 - Demo state (days, referrals) is kept in the browser's localStorage; "Reset demo" clears it.
+- Every few seconds it reads `/api/tracker/ehr-referrals`: Endocrinology orders approved in the
+  EHR for the tracker's patients. Such an order replaces that patient's demo referral at
+  "Ordered"; an approved referral letter becomes the packet ("Packet ready"); a filed consult
+  note closes the loop. Pending orders are left out, and the sync never moves a referral back.
 
 ## Chart images
 
