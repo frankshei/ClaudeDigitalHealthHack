@@ -30,7 +30,7 @@ const fail = (msg) => { console.error(`\n!! ${msg}\n`); process.exit(1); };
 const run = (cmd, a, quiet = false) => spawnSync(cmd, a, { cwd: root, stdio: quiet ? "ignore" : "inherit" }).status === 0;
 
 async function health() {
-  try { const r = await fetch(`${base}/api/health`); return r.ok ? await r.json() : null; } catch { return null; }
+  try { const r = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(3000) }); return r.ok ? await r.json() : null; } catch { return null; }
 }
 
 function hasKey() {
@@ -77,8 +77,16 @@ function openBrowser(url) {
     fs.mkdirSync(path.join(root, "var"), { recursive: true });
     const logFile = fs.openSync(path.join(root, "var", "demo-server.log"), "w");
     server = spawn(python, ["-m", "uvicorn", "app.main:app", "--port", port], { cwd: root, stdio: ["ignore", logFile, logFile] });
+    const why = () => {
+      const log = fs.readFileSync(path.join(root, "var", "demo-server.log"), "utf8");
+      if (/address already in use|Errno 48|Errno 98|10048/i.test(log)) {
+        return `Port ${port} is already used by another program. Stop it, or run on another port:\n\n   PORT=8001 npm run demo`;
+      }
+      return "The app stopped while starting. The end of its log (var/demo-server.log):\n\n" +
+        log.trim().split("\n").slice(-15).map((l) => "   " + l).join("\n");
+    };
     for (let i = 0; i < 120 && !h; i++) {
-      if (server.exitCode !== null) fail("The app stopped while starting. See var/demo-server.log.");
+      if (server.exitCode !== null) fail(why());
       await new Promise((r) => setTimeout(r, 500));
       h = await health();
     }

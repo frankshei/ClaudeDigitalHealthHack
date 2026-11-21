@@ -12,6 +12,7 @@ import re
 from collections import defaultdict
 from datetime import date
 from html import escape
+from typing import Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -671,7 +672,7 @@ def build_router(chart: Chart, store: Store | None = None) -> APIRouter:
     # ---- documents ------------------------------------------------------------------
 
     @r.get("/ehr/patients/{pid}/documents", response_class=HTMLResponse)
-    def documents(pid: str, request: Request, referral: int | None = None):
+    def documents(pid: str, request: Request, referral: Optional[int] = None):
         h = need(pid)
         rows = [[f"<a href='/ehr/patients/{pid}/documents/{d['id']}'>{_x(d['title'])}</a>", DOC_KINDS[d["kind"]],
                  f"<a href='/ehr/patients/{pid}/referrals/{d['referral_id']}'>R-{d['referral_id']}</a>" if d["referral_id"] else "",

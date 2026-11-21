@@ -11,7 +11,7 @@ A referral system built on a mock EHR, with synthetic patients only:
 
 ## The demo in one command
 
-With Node.js and Python 3.10+ installed, and your Claude API key in `.env`
+With Node.js and Python 3.9+ installed, and your Claude API key in `.env`
 (`ANTHROPIC_API_KEY=...`), from the repo folder:
 
 ```
@@ -27,7 +27,7 @@ The sections below are the same steps done by hand.
 
 ## Quick start
 
-You need Node.js, Python 3.10 or newer, and a Claude API key. Run these from the repo folder.
+You need Node.js, Python 3.9 or newer, and a Claude API key. Run these from the repo folder.
 
 **Once**, to set up:
 
