@@ -10,3 +10,6 @@ __pycache__/
 *.pyc
 npm-debug.log*
 .DS_Store
+
+# Rendered chart images (npm run charts)
+charts/

@@ -29,9 +29,11 @@ from pydantic import BaseModel  # noqa: E402
 
 from . import llm  # noqa: E402
 from .data import CONDITIONS, Chart  # noqa: E402
+from .ehr import build_router  # noqa: E402
 
 app = FastAPI(title="Referral note drafting")
 chart = Chart()
+app.include_router(build_router(chart))
 
 
 class Answer(BaseModel):

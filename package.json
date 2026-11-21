@@ -6,6 +6,7 @@
   "scripts": {
     "postinstall": "node scripts/py.js setup",
     "setup": "node scripts/py.js setup",
-    "dev": "node scripts/py.js dev"
+    "dev": "node scripts/py.js dev",
+    "charts": "node scripts/charts.js"
   }
 }
