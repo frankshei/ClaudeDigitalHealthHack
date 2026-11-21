@@ -22,7 +22,7 @@ function setup() {
   if (!fs.existsSync(venvPython)) {
     const made = ["python", "python3", "py"].some((python) => run(python, ["-m", "venv", ".venv"]));
     if (!made) {
-      console.error("Python 3.10 or newer is required but was not found on PATH.");
+      console.error("Python 3.9 or newer is required but was not found on PATH.");
       process.exit(1);
     }
   }
