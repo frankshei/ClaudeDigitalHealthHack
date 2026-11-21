@@ -108,14 +108,8 @@ Conditions: diabetic kidney disease (Nephrology), type 2 diabetes (Endocrinology
 
 ## Run
 
-Needs Python 3.10+ and Node.js (Node is only used to run the scripts).
-
-```
-npm install     # creates .venv and installs the Python packages
-npm run dev     # starts the server with reload
-```
-
-Open http://localhost:8000. To use another port: set the `PORT` environment variable.
+Set up and start the app as in [Quick start](#quick-start), then open http://localhost:8000.
+To use another port, start it with `PORT=3000 npm run dev`.
 
 The flow: **Draft note** writes the note from the chart, Claude then asks follow-up
 questions about the draft, and **Update note with answers** revises it.
