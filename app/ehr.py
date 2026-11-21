@@ -6,23 +6,31 @@ URL, by clicking, or by reading the screen. Each patient also has a paged "print
 """
 from __future__ import annotations
 
+import contextvars
 import math
 import re
 from collections import defaultdict
 from datetime import date
 from html import escape
+from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .data import Chart, _clean, _d, _fmt
+from .ehr_store import DOC_KINDS, SPECIALTIES, URGENCIES, USERS, NotAllowed, Store
 
 PRODUCT = "Harborview EHR"
 PAGE_SIZE = 100
 TABS = [("summary", "Summary"), ("problems", "Problems"), ("medications", "Medications"),
         ("allergies", "Allergies"), ("vitals", "Vitals"), ("results", "Results"),
         ("encounters", "Encounters"), ("procedures", "Procedures"), ("imaging", "Imaging"),
-        ("careplans", "Care plans"), ("demographics", "Demographics")]
+        ("careplans", "Care plans"), ("referrals", "Referrals"), ("documents", "Documents"),
+        ("demographics", "Demographics")]
+
+# Who is signed in for the current request (set from a cookie), and the write store.
+CURRENT_USER: contextvars.ContextVar[str | None] = contextvars.ContextVar("ehr_user", default=None)
+STORE: Store | None = None
 
 # Printed chart page geometry (CSS pixels). Kept under ~1568 px on the long edge so a
 # vision model reads it at full resolution instead of downscaling it.
@@ -215,7 +223,7 @@ CSS = """
 body{margin:0;font:13px/1.4 Inter,"Segoe UI",Arial,sans-serif;color:var(--text);background:#e9edf2}
 a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
 .top{display:flex;align-items:center;gap:18px;background:var(--navy);color:#fff;padding:7px 14px}
-.top b{font-size:15px;letter-spacing:.02em} .top a{color:#dfe8f3} .top .sp{flex:1}
+.top b{font-size:15px;letter-spacing:.02em;white-space:nowrap} .top a,.top span,.top button{white-space:nowrap} .top a{color:#dfe8f3} .top .sp{flex:1}
 .top form{display:flex;gap:6px} .top input{padding:4px 8px;border:0;border-radius:3px;width:260px;font:inherit}
 .top .who{color:#b9c8da;font-size:12px}
 .banner{display:flex;flex-wrap:wrap;gap:6px 26px;align-items:baseline;background:#fff;border-bottom:3px solid var(--navy2);padding:9px 14px}
@@ -241,16 +249,68 @@ td.n{text-align:right;white-space:nowrap} td.d{white-space:nowrap}
 .bar button{padding:4px 12px;font:inherit;background:var(--navy2);color:#fff;border:0;border-radius:3px;cursor:pointer}
 .pager{display:flex;gap:12px;align-items:center;margin:10px 0}
 dl.kv{display:grid;grid-template-columns:190px 1fr;gap:4px 12px;margin:6px 0} dl.kv dt{color:var(--muted)} dl.kv dd{margin:0}
+.top .user{color:#fff} .top .user.agent{background:#7a4cc2;padding:2px 8px;border-radius:3px}
+.top .inb{background:#f2b84b;color:#1b2430;padding:1px 7px;border-radius:9px;font-weight:700;margin-left:4px}
+.top button.link{background:none;border:0;color:#dfe8f3;font:inherit;cursor:pointer;padding:0}
+.pill.pending{border-color:#b26a00;color:#8a5200;background:#fff6e5} .pill.ok{border-color:#2e7d32;color:#2e7d32}
+.pill.bad{border-color:var(--alert);color:var(--alert)} .pill.ai{border-color:#7a4cc2;color:#5b2ea6;background:#f3edfb}
+.flash{padding:8px 12px;border-radius:4px;margin:0 0 12px;border:1px solid} .flash.ok{background:#eaf5ec;border-color:#9cc9a4}
+.flash.err{background:#fbeaea;border-color:#e0a3a3;color:#7d1b17}
+form.entry{background:#fff;border:1px solid var(--line);border-radius:4px;padding:10px 14px;max-width:820px;margin:8px 0 16px}
+form.entry label{display:block;font-weight:600;margin:10px 0 4px} form.entry .hint{color:var(--muted);font-weight:400}
+form.entry select,form.entry input,form.entry textarea{width:100%;padding:6px 8px;font:inherit;border:1px solid var(--line);border-radius:3px}
+form.entry textarea{min-height:90px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
+.btn{padding:6px 14px;font:inherit;background:var(--navy2);color:#fff;border:0;border-radius:3px;cursor:pointer}
+.btn.ghost{background:#fff;color:var(--navy2);border:1px solid var(--navy2)} .btn.danger{background:var(--alert)}
+.actions{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+pre.doc{white-space:pre-wrap;background:#fff;border:1px solid var(--line);border-radius:4px;padding:12px;font:12.5px/1.5 ui-monospace,Consolas,monospace;max-width:900px}
+.notice{background:#f3edfb;border:1px solid #cdb8ee;border-radius:4px;padding:8px 12px;margin:0 0 12px;max-width:820px}
 """
 
 
 def _page(title: str, body: str, banner: str = "") -> str:
+    uid = CURRENT_USER.get()
+    n = STORE.pending_count() if STORE else 0
+    inbox = f"<a href='/ehr/inbox' id='inbox-link'>In basket{f'<span class=inb>{n}</span>' if n else ''}</a>"
+    if uid in USERS:
+        u = USERS[uid]
+        who = (f"<span class='user{' agent' if u['role'] == 'agent' else ''}' id='signed-in-as'>Signed in: {_x(u['name'])}"
+               f" · {_x(u['title'])}</span><form action='/ehr/logout' method='post'><button class='link' type='submit'>Sign out</button></form>")
+    else:
+        who = "<a href='/ehr/login' id='sign-in-link'>Sign in</a><span class='who'>Read-only</span>"
     return (f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>{_x(title)} | {PRODUCT}</title>"
             f"<meta name='viewport' content='width=device-width, initial-scale=1'><style>{CSS}</style></head><body>"
-            f"<div class='top'><b>{PRODUCT}</b><a href='/ehr'>Patient lookup</a><a href='/tracker'>Referral Tracker</a>"
+            f"<div class='top'><b>{PRODUCT}</b><a href='/ehr'>Patient lookup</a>{inbox}<a href='/ehr/audit'>Audit log</a>"
+            f"<a href='/tracker'>Referral Tracker</a>"
             f"<span class='sp'></span><form action='/ehr' method='get'><input name='q' aria-label='Search patients' "
             f"placeholder='Search name or MRN'><button type='submit' style='display:none'>Search</button></form>"
-            f"<span class='who'>Synthetic data (Synthea) · Training environment</span></div>{banner}{body}</body></html>")
+            f"{who}<span class='who'>Synthetic data (Synthea)</span></div>{banner}{body}</body></html>")
+
+
+def _flash(request: Request) -> str:
+    msg, err = request.query_params.get("msg"), request.query_params.get("err")
+    return ((f"<div class='flash ok' role='status'>{_x(msg)}</div>" if msg else "")
+            + (f"<div class='flash err' role='alert'>{_x(err)}</div>" if err else ""))
+
+
+STATUS_PILL = {"pending": ("pending", "Pending approval"), "ordered": ("ok", "Ordered"), "filed": ("ok", "Filed"),
+               "rejected": ("bad", "Rejected"), "closed": ("res", "Closed · consult received")}
+
+
+def _pill(status: str) -> str:
+    cls, label = STATUS_PILL.get(status, ("res", status))
+    return f"<span class='pill {cls}'>{label}</span>"
+
+
+def _by(uid: str | None) -> str:
+    if not uid:
+        return ""
+    u = USERS.get(uid, {"name": uid, "role": ""})
+    return _x(u["name"]) + (" <span class='pill ai'>AI</span>" if u["role"] == "agent" else "")
+
+
+def _when(ts: str | None) -> str:
+    return (ts or "").replace("T", " ")[:16]
 
 
 def _table(headers: list[str], rows: list[list[str]], numeric: set[int] = frozenset(), dates: set[int] = frozenset(),
@@ -278,9 +338,15 @@ def _status(active: bool) -> str:
     return "<span class='pill act'>Active</span>" if active else "<span class='pill res'>Resolved</span>"
 
 
-def build_router(chart: Chart) -> APIRouter:
+async def _signed_in(request: Request) -> None:
+    CURRENT_USER.set(request.cookies.get("ehr_user"))
+
+
+def build_router(chart: Chart, store: Store | None = None) -> APIRouter:
+    global STORE
     ehr = EHR(chart)
-    r = APIRouter()
+    STORE = store = store or Store()
+    r = APIRouter(dependencies=[Depends(_signed_in)])
 
     def need(pid: str) -> dict:
         if pid not in chart.patients:
@@ -349,7 +415,12 @@ def build_router(chart: Chart) -> APIRouter:
         encs = ehr.encounters(pid)[:10]
         plans = [c for c in ehr.careplans(pid) if c["status"] == "Active"]
         dx = [p for p in active if p["kind"] == "Disorder"]
+        refs = [x for x in store.referrals(pid) if x["status"] in ("pending", "ordered")]
         cards = [
+            ("Open referrals", _table(["Order", "Specialty", "Urgency", "Status"],
+                                      [[f"<a href='/ehr/patients/{pid}/referrals/{x['id']}'>R-{x['id']}</a>", _x(x["specialty"]),
+                                        _x(x["urgency"]), _pill(x["status"])] for x in refs],
+                                      empty=f"No open referrals. <a href='/ehr/patients/{pid}/referrals'>New referral order</a>")),
             ("Active problems", _table(["Problem", "Onset"], [[_x(p["name"]), p["onset"]] for p in dx], dates={1})),
             ("Active medications", _table(["Medication", "Since"], [[_x(m["name"]), m["start"]] for m in meds], dates={1})),
             ("Recent vitals", _table(["Measure"] + dates, [[_x(n)] + [_x(v) for v in vals] for n, vals in vit])),
@@ -495,6 +566,226 @@ def build_router(chart: Chart) -> APIRouter:
                   ("Lifetime coverage", _money(p["HEALTHCARE_COVERAGE"])), ("System ID", pid)]
         kv = "<dl class='kv'>" + "".join(f"<dt>{k}</dt><dd>{_x(v) or '—'}</dd>" for k, v in fields) + "</dl>"
         return chart_page(h, "demographics", "Demographics", f"<div class='card'>{kv}</div>")
+
+    # ---- signing in -----------------------------------------------------------------
+
+    def back(url: str, msg: str = "", err: str = "") -> RedirectResponse:
+        q = f"msg={quote(msg)}" if msg else f"err={quote(err)}" if err else ""
+        return RedirectResponse(url + (("&" if "?" in url else "?") + q if q else ""), status_code=303)
+
+    @r.get("/ehr/login", response_class=HTMLResponse)
+    def login_page(next: str = "/ehr"):
+        nxt = next if next.startswith("/ehr") else "/ehr"
+        rows = "".join(
+            f"<form method='post' action='/ehr/login' class='actions'><input type='hidden' name='user' value='{k}'>"
+            f"<input type='hidden' name='next' value='{_x(nxt)}'><button class='btn' type='submit' id='sign-in-{k}'>"
+            f"Sign in as {_x(u['name'])}</button><span class='muted'>{_x(u['title'])}"
+            f"{' · can propose referrals and documents; a person approves them' if u['role'] == 'agent' else ' · can enter, approve and reject'}"
+            f"</span></form>" for k, u in USERS.items())
+        return HTMLResponse(_page("Sign in", f"<main><h1>Sign in</h1><p class='muted'>Demo accounts, no password.</p>{rows}</main>"))
+
+    @r.post("/ehr/login")
+    def login(user: str = Form(...), next: str = Form("/ehr")):
+        if user not in USERS:
+            raise HTTPException(400, "Unknown user")
+        resp = RedirectResponse(next if next.startswith("/ehr") else "/ehr", status_code=303)
+        resp.set_cookie("ehr_user", user, httponly=True, samesite="lax")
+        return resp
+
+    @r.post("/ehr/logout")
+    def logout():
+        resp = RedirectResponse("/ehr", status_code=303)
+        resp.delete_cookie("ehr_user")
+        return resp
+
+    def who_note(pid: str, what: str) -> str:
+        uid = CURRENT_USER.get()
+        if uid not in USERS:
+            return (f"<p class='notice'>You are viewing read-only. <a href='/ehr/login?next=/ehr/patients/{pid}/{what}'>"
+                    f"Sign in</a> to enter {'a referral order' if what == 'referrals' else 'a document'}.</p>")
+        if USERS[uid]["role"] == "agent":
+            return ("<p class='notice'><b>Signed in as the Fable operator.</b> What you enter is saved as "
+                    "<b>pending</b> and takes effect only after Dana or Dr. Patel approves it in the In basket.</p>")
+        return ""
+
+    # ---- referrals ------------------------------------------------------------------
+
+    @r.get("/ehr/patients/{pid}/referrals", response_class=HTMLResponse)
+    def referrals(pid: str, request: Request):
+        h = need(pid)
+        rows = [[f"<a href='/ehr/patients/{pid}/referrals/{x['id']}'>R-{x['id']}</a>", _when(x["entered_at"]),
+                 _x(x["specialty"]), _x(x["urgency"]), _x(x["question"]), _pill(x["status"]), _by(x["entered_by"]),
+                 _by(x["decided_by"])] for x in store.referrals(pid)]
+        signed = CURRENT_USER.get() in USERS
+        opts = lambda xs, sel="": "".join(f"<option{' selected' if x == sel else ''}>{_x(x)}</option>" for x in xs)
+        form = (f"<form class='entry' method='post' action='/ehr/patients/{pid}/referrals' id='new-referral'>"
+                f"<h2 style='margin-top:6px'>New referral order</h2>"
+                f"<label for='specialty'>Refer to</label><select id='specialty' name='specialty'>{opts(SPECIALTIES)}</select>"
+                f"<label for='urgency'>Urgency</label><select id='urgency' name='urgency'>{opts(URGENCIES)}</select>"
+                f"<label for='question'>Clinical question for the specialist</label><textarea id='question' name='question' required></textarea>"
+                f"<label for='reason'>Reason for referral <span class='hint'>(optional: history and workup to date)</span></label>"
+                f"<textarea id='reason' name='reason'></textarea>"
+                f"<div class='actions'><button class='btn' type='submit'>Submit referral order</button></div></form>") if signed else ""
+        content = (_flash(request) + who_note(pid, "referrals")
+                   + _table(["Order", "Entered", "Specialty", "Urgency", "Clinical question", "Status", "Entered by", "Decided by"],
+                            rows, dates={0, 1}, empty="No referral orders on this chart.") + form)
+        return chart_page(h, "referrals", "Referral orders", content)
+
+    @r.post("/ehr/patients/{pid}/referrals")
+    def referral_create(pid: str, specialty: str = Form(...), urgency: str = Form(...), question: str = Form(""),
+                        reason: str = Form("")):
+        need(pid)
+        try:
+            rid = store.propose_referral(CURRENT_USER.get(), pid, specialty, urgency, question, reason)
+        except NotAllowed as e:
+            return back(f"/ehr/patients/{pid}/referrals", err=str(e))
+        pending = store.referral(rid)["status"] == "pending"
+        return back(f"/ehr/patients/{pid}/referrals/{rid}",
+                    msg=f"Referral order R-{rid} " + ("saved as pending. It goes to the In basket for approval." if pending else "placed."))
+
+    @r.get("/ehr/patients/{pid}/referrals/{rid}", response_class=HTMLResponse)
+    def referral_detail(pid: str, rid: int, request: Request):
+        h = need(pid)
+        x = store.referral(rid)
+        if not x or x["patient_id"] != pid:
+            raise HTTPException(404, "Unknown referral")
+        kv = (f"<dl class='kv'><dt>Status</dt><dd>{_pill(x['status'])}</dd><dt>Refer to</dt><dd>{_x(x['specialty'])}</dd>"
+              f"<dt>Urgency</dt><dd>{_x(x['urgency'])}</dd><dt>Clinical question</dt><dd>{_x(x['question'])}</dd>"
+              f"<dt>Reason for referral</dt><dd style='white-space:pre-wrap'>{_x(x['reason']) or '—'}</dd>"
+              f"<dt>Entered</dt><dd>{_when(x['entered_at'])} by {_by(x['entered_by'])}</dd>"
+              f"<dt>Decision</dt><dd>{(_when(x['decided_at']) + ' by ' + _by(x['decided_by'])) if x['decided_by'] else 'Waiting for approval' if x['status'] == 'pending' else '—'}"
+              f"{(' · ' + _x(x['decision_note'])) if x['decision_note'] else ''}</dd>"
+              f"<dt>Closed</dt><dd>{_when(x['closed_at']) or '—'}</dd></dl>")
+        docs = [d for d in store.documents(pid) if d["referral_id"] == rid]
+        doc_rows = [[f"<a href='/ehr/patients/{pid}/documents/{d['id']}'>{_x(d['title'])}</a>", DOC_KINDS[d["kind"]],
+                     _pill(d["status"]), _by(d["entered_by"])] for d in docs]
+        hist = [[_when(a["at"]), _by(a["actor"]), _x(a["action"]), _x(a["detail"])] for a in store.audit(pid)
+                if a["item"] == f"referral {rid}" or (a["item"] or "").startswith("document ") and any(f"document {d['id']}" == a["item"] for d in docs)]
+        content = (_flash(request) + f"<p><a href='/ehr/patients/{pid}/referrals'>&larr; All referral orders</a></p>"
+                   + f"<div class='card'>{kv}</div><h2>Documents for this referral</h2>"
+                   + _table(["Document", "Type", "Status", "Entered by"], doc_rows, empty="None yet.")
+                   + f"<p><a href='/ehr/patients/{pid}/documents?referral={rid}'>File a document for this referral</a></p>"
+                   + "<h2>History</h2>" + _table(["When", "Who", "Action", "Detail"], hist, dates={0}))
+        return chart_page(h, "referrals", f"Referral order R-{rid}", content)
+
+    # ---- documents ------------------------------------------------------------------
+
+    @r.get("/ehr/patients/{pid}/documents", response_class=HTMLResponse)
+    def documents(pid: str, request: Request, referral: int | None = None):
+        h = need(pid)
+        rows = [[f"<a href='/ehr/patients/{pid}/documents/{d['id']}'>{_x(d['title'])}</a>", DOC_KINDS[d["kind"]],
+                 f"<a href='/ehr/patients/{pid}/referrals/{d['referral_id']}'>R-{d['referral_id']}</a>" if d["referral_id"] else "",
+                 _x(d["source"]), _when(d["entered_at"]), _pill(d["status"]), _by(d["entered_by"])] for d in store.documents(pid)]
+        signed = CURRENT_USER.get() in USERS
+        refs = [x for x in store.referrals(pid) if x["status"] in ("pending", "ordered", "closed")]
+        ref_opts = "<option value=''>Not linked to a referral</option>" + "".join(
+            f"<option value='{x['id']}'{' selected' if x['id'] == referral else ''}>R-{x['id']} · {_x(x['specialty'])} · {STATUS_PILL[x['status']][1]}</option>" for x in refs)
+        kinds = "".join(f"<option value='{k}'>{v}</option>" for k, v in DOC_KINDS.items())
+        form = (f"<form class='entry' method='post' action='/ehr/patients/{pid}/documents' id='new-document'>"
+                f"<h2 style='margin-top:6px'>File a document</h2>"
+                f"<label for='kind'>Document type</label><select id='kind' name='kind'>{kinds}</select>"
+                f"<label for='referral_id'>Referral</label><select id='referral_id' name='referral_id'>{ref_opts}</select>"
+                f"<label for='title'>Title</label><input id='title' name='title' required>"
+                f"<label for='source'>Source <span class='hint'>(optional: e.g. fax received 2026-11-19, 2 pages)</span></label>"
+                f"<input id='source' name='source'>"
+                f"<label for='body'>Text</label><textarea id='body' name='body' style='min-height:220px' required></textarea>"
+                f"<div class='actions'><button class='btn' type='submit'>File document</button></div></form>") if signed else ""
+        content = (_flash(request) + who_note(pid, "documents")
+                   + _table(["Document", "Type", "Referral", "Source", "Entered", "Status", "Entered by"], rows,
+                            dates={4}, empty="No documents filed on this chart.") + form)
+        return chart_page(h, "documents", "Documents", content)
+
+    @r.post("/ehr/patients/{pid}/documents")
+    def document_create(pid: str, kind: str = Form(...), title: str = Form(""), body: str = Form(""),
+                        source: str = Form(""), referral_id: str = Form("")):
+        need(pid)
+        try:
+            did = store.file_document(CURRENT_USER.get(), pid, kind, title, body,
+                                      int(referral_id) if referral_id.strip().isdigit() else None, source)
+        except NotAllowed as e:
+            return back(f"/ehr/patients/{pid}/documents", err=str(e))
+        pending = store.document(did)["status"] == "pending"
+        return back(f"/ehr/patients/{pid}/documents/{did}",
+                    msg="Document " + ("saved as pending. It goes to the In basket for approval." if pending else "filed."))
+
+    @r.get("/ehr/patients/{pid}/documents/{did}", response_class=HTMLResponse)
+    def document_detail(pid: str, did: int, request: Request):
+        h = need(pid)
+        d = store.document(did)
+        if not d or d["patient_id"] != pid:
+            raise HTTPException(404, "Unknown document")
+        rid = d["referral_id"]
+        ref_link = f"<a href='/ehr/patients/{pid}/referrals/{rid}'>R-{rid}</a>" if rid else "—"
+        kv = (f"<dl class='kv'><dt>Type</dt><dd>{DOC_KINDS[d['kind']]}</dd><dt>Status</dt><dd>{_pill(d['status'])}</dd>"
+              f"<dt>Referral</dt><dd>{ref_link}</dd>"
+              f"<dt>Source</dt><dd>{_x(d['source']) or '—'}</dd><dt>Entered</dt><dd>{_when(d['entered_at'])} by {_by(d['entered_by'])}</dd>"
+              f"<dt>Decision</dt><dd>{(_when(d['decided_at']) + ' by ' + _by(d['decided_by'])) if d['decided_by'] else 'Waiting for approval' if d['status'] == 'pending' else '—'}"
+              f"{(' · ' + _x(d['decision_note'])) if d['decision_note'] else ''}</dd></dl>")
+        content = (_flash(request) + f"<p><a href='/ehr/patients/{pid}/documents'>&larr; All documents</a></p>"
+                   + f"<div class='card'>{kv}</div><h2>Text</h2><pre class='doc' id='document-text'>{_x(d['body'])}</pre>")
+        return chart_page(h, "documents", d["title"], content)
+
+    # ---- in basket and audit -----------------------------------------------------------
+
+    @r.get("/ehr/inbox", response_class=HTMLResponse)
+    def inbox(request: Request):
+        uid = CURRENT_USER.get()
+        can_decide = uid in USERS and USERS[uid]["role"] != "agent"
+        items = []
+        for kind, x in store.pending():
+            h = ehr.ident(x["patient_id"])
+            if kind == "referral":
+                link, what = f"/ehr/patients/{x['patient_id']}/referrals/{x['id']}", f"Referral order R-{x['id']}"
+                summary = f"{_x(x['specialty'])} · {_x(x['urgency'])} · {_x(x['question'])}"
+            else:
+                link, what = f"/ehr/patients/{x['patient_id']}/documents/{x['id']}", DOC_KINDS[x["kind"]]
+                summary = _x(x["title"]) + (f" <span class='muted'>({_x(x['source'])})</span>" if x["source"] else "")
+            decide = (f"<form method='post' action='/ehr/inbox/{kind}/{x['id']}' class='actions'>"
+                      f"<input name='note' aria-label='Note (optional)' placeholder='Note (optional)' style='padding:4px 6px;border:1px solid var(--line);border-radius:3px'>"
+                      f"<button class='btn' name='decision' value='approve' type='submit'>Approve</button>"
+                      f"<button class='btn ghost' name='decision' value='reject' type='submit'>Reject</button></form>") if can_decide else ""
+            items.append([_when(x["entered_at"]), f"<a href='/ehr/patients/{x['patient_id']}/summary'>{_x(h['name'])}</a><br><span class='muted'>MRN {h['mrn']}</span>",
+                          f"<a href='{link}'>{what}</a><br>{summary}", _by(x["entered_by"]), decide])
+        note = ("" if can_decide else "<p class='notice'>Only Dana or Dr. Patel can approve or reject. "
+                + ("The Fable operator can see what is waiting but cannot decide." if uid == "fable" else "<a href='/ehr/login?next=/ehr/inbox'>Sign in</a> to decide.") + "</p>")
+        body = (f"<main><h1>In basket: waiting for approval ({len(items)})</h1>{_flash(request)}{note}"
+                + _table(["Entered", "Patient", "Item", "Entered by", "Decision"], items, dates={0}, empty="Nothing is waiting for approval.")
+                + "</main>")
+        return HTMLResponse(_page("In basket", body))
+
+    @r.post("/ehr/inbox/{item}/{item_id}")
+    def decide(item: str, item_id: int, decision: str = Form(...), note: str = Form("")):
+        try:
+            store.decide(CURRENT_USER.get(), item, item_id, decision == "approve", note)
+        except NotAllowed as e:
+            return back("/ehr/inbox", err=str(e))
+        return back("/ehr/inbox", msg=f"{item.capitalize()} {'approved' if decision == 'approve' else 'rejected'}.")
+
+    @r.get("/ehr/audit", response_class=HTMLResponse)
+    def audit(request: Request):
+        rows = []
+        for a in store.audit():
+            pt = ""
+            if a["patient_id"] in chart.patients:
+                h = ehr.ident(a["patient_id"])
+                pt = f"<a href='/ehr/patients/{a['patient_id']}/summary'>{_x(h['name'])}</a>"
+            rows.append([_when(a["at"]), _by(a["actor"]), _x(a["action"]), pt, _x(a["item"]), _x(a["detail"])])
+        uid = CURRENT_USER.get()
+        reset = ("<form method='post' action='/ehr/admin/reset' class='actions' onsubmit=\"return confirm('Delete all referral orders, documents and audit entries?')\">"
+                 "<button class='btn danger' type='submit'>Reset demo data</button><span class='muted'>Deletes everything entered in the EHR. The Synthea chart is not affected.</span></form>"
+                 if uid in USERS and USERS[uid]["role"] != "agent" else "")
+        body = (f"<main><h1>Audit log</h1>{_flash(request)}<p class='muted'>Every referral order, document and decision, newest first.</p>"
+                + _table(["When", "Who", "Action", "Patient", "Item", "Detail"], rows, dates={0}, empty="Nothing has been entered yet.")
+                + reset + "</main>")
+        return HTMLResponse(_page("Audit log", body))
+
+    @r.post("/ehr/admin/reset")
+    def reset():
+        try:
+            store.reset(CURRENT_USER.get())
+        except NotAllowed as e:
+            return back("/ehr/audit", err=str(e))
+        return back("/ehr/audit", msg="Demo data reset.")
 
     # ---- printed chart (for PNG rendering) ---------------------------------------------
 

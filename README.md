@@ -38,6 +38,22 @@ all 120 Synthea patients, for the operator agent to work in:
   recorded at it.
 - Plain links and GET forms only, so every screen has its own URL.
 
+### Writing to the EHR (operator limits)
+
+Sign in at `/ehr/login` as one of three demo users: **Fable operator** (AI agent),
+**Dana** (referral coordinator) or **Dr. Patel**. Signed out, the EHR is read-only.
+
+- The operator can do two things: place a referral order (Referrals tab) and file a document
+  (Documents tab: referral letter, consult note, referral tracker note). Both are saved as
+  **pending** and appear in the **In basket** (`/ehr/inbox`).
+- Only Dana or Dr. Patel can approve or reject. The operator cannot, and cannot reset data.
+- Approving a consult note linked to an open referral closes that referral.
+- Nothing can change problems, medications, allergies, results or demographics.
+- Every entry and decision is in the **Audit log** (`/ehr/audit`), with AI entries marked.
+- The limits are enforced in `app/ehr_store.py`, not just hidden in the screens.
+- Entries live in `var/ehr.db` (not in git; the Synthea CSVs are never changed). "Reset demo
+  data" on the audit log page (signed in as a person) clears them.
+
 ## Referral Tracker
 
 http://localhost:8000/tracker: the team's Referral Tracker (PCP office, Endo office and
@@ -70,6 +86,7 @@ encounter. Full lab history is in the EHR's Results tab, not in the images.
   Per-condition labs, relevance rules and specialist guidance live in `CONDITIONS`.
 - `app/ehr.py`: the mock EHR screens and the paged printed chart.
 - `app/tracker.py`: serves the Referral Tracker and builds its data.
+- `app/ehr_store.py`: referral orders, documents, approvals and the audit log, with the write limits.
 - `app/llm.py`: system prompt and the Claude API call (streaming).
 - `app/main.py`: HTTP API. `POST /api/referrals` streams newline-delimited JSON events.
 - `scripts/charts.js`: renders the chart PNGs with Playwright.

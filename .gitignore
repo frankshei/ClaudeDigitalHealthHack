@@ -13,3 +13,4 @@ npm-debug.log*
 
 # Rendered chart images (npm run charts)
 charts/
+var/
