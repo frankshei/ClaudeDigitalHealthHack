@@ -1,6 +1,7 @@
 // Runs the Python side of the project from npm, on Windows, macOS or Linux.
 //   node scripts/py.js setup   create .venv if needed and install requirements.txt
 //   node scripts/py.js dev     start the server with reload (PORT env var, default 8000)
+//   node scripts/py.js operator -- --mrn <MRN> ...   run the Fable operator against the running EHR
 const { spawnSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
@@ -35,9 +36,14 @@ function dev() {
   run(venvPython, ["-m", "uvicorn", "app.main:app", "--reload", "--port", port]);
 }
 
-const task = { setup, dev }[process.argv[2]];
+function operator() {
+  if (!fs.existsSync(venvPython)) setup();
+  run(venvPython, ["-m", "app.fable_operator", ...process.argv.slice(3)]);
+}
+
+const task = { setup, dev, operator }[process.argv[2]];
 if (!task) {
-  console.error("Usage: node scripts/py.js <setup|dev>");
+  console.error("Usage: node scripts/py.js <setup|dev|operator>");
   process.exit(1);
 }
 task();

@@ -54,6 +54,33 @@ Sign in at `/ehr/login` as one of three demo users: **Fable operator** (AI agent
 - Entries live in `var/ehr.db` (not in git; the Synthea CSVs are never changed). "Reset demo
   data" on the audit log page (signed in as a person) clears them.
 
+## Fable operator
+
+`app/fable_operator.py` runs Claude Fable 5.2 (`claude-fable-5-2`) in two phases:
+
+1. **Vision:** sends the patient's chart page images (`charts/<MRN>_*/page-NN.png`, rendered
+   first if missing) and drafts the referral: clinical question, reason and letter.
+2. **Computer use:** drives the EHR in a browser through the computer use toolset
+   (`computer_toolset_20260801`, 1280x800 screenshots), places the referral order and files the
+   letter against it. Both stay pending for Dana or Dr. Patel to approve in the In basket.
+
+With `npm run dev` running, in a second terminal:
+
+```
+npm run operator -- --mrn 76920746 --specialty Endocrinology --question "Next step in glucose-lowering treatment?"
+```
+
+Options: `--urgency Routine|Urgent|Emergent`, `--headed` (show the browser), `--read-only`
+(phase 1 only). Needs `ANTHROPIC_API_KEY` in `.env` or the environment, and a Playwright
+browser: run `.venv/bin/playwright install chromium` once (on Windows `.venv\Scripts\playwright`).
+Settings: `OPERATOR_MODEL`, `OPERATOR_EFFORT` (default `high`), `OPERATOR_MAX_TURNS`
+(default 40), `EHR_URL` (default `http://localhost:8000`).
+
+The operator's limits, on top of the EHR's own: the harness signs the browser in as the Fable
+operator and blocks any request that signs in or out, approves, rejects or resets, and sends
+the browser back if it leaves the EHR. The demo sign-in has no password, so this harness
+guard is what stops the agent signing in as a person; a real deployment needs real sign-in.
+
 ## Referral Tracker
 
 http://localhost:8000/tracker: the team's Referral Tracker (PCP office, Endo office and
@@ -87,6 +114,7 @@ encounter. Full lab history is in the EHR's Results tab, not in the images.
 - `app/ehr.py`: the mock EHR screens and the paged printed chart.
 - `app/tracker.py`: serves the Referral Tracker and builds its data.
 - `app/ehr_store.py`: referral orders, documents, approvals and the audit log, with the write limits.
+- `app/fable_operator.py`: the Fable 5.2 operator (chart images, then computer use in the EHR).
 - `app/llm.py`: system prompt and the Claude API call (streaming).
 - `app/main.py`: HTTP API. `POST /api/referrals` streams newline-delimited JSON events.
 - `scripts/charts.js`: renders the chart PNGs with Playwright.

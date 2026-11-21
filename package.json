@@ -7,6 +7,7 @@
     "postinstall": "node scripts/py.js setup",
     "setup": "node scripts/py.js setup",
     "dev": "node scripts/py.js dev",
-    "charts": "node scripts/charts.js"
+    "charts": "node scripts/charts.js",
+    "operator": "node scripts/py.js operator"
   }
 }
