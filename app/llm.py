@@ -101,6 +101,13 @@ QUESTIONS_SCHEMA = {
 
 # Used when no model is available. Generic by necessity; the live questions are patient-specific.
 FALLBACK_QUESTIONS = {
+    "endo": [
+        ("What is prompting the referral now: HbA1c not at goal, side effects, or something else?",
+         "Focuses the consultation"),
+        ("Any hypoglycemia, or symptoms of high blood sugar such as thirst or weight loss?", "Sets urgency"),
+        ("Is the patient taking the diabetes medicines as prescribed, and has cost or side effects been a barrier?",
+         "Separates adherence from treatment failure"),
+    ],
     "dkd": [
         ("Does the patient have swelling, breathlessness, fatigue, nausea or itching?", "Sets urgency"),
         ("Is the patient taking NSAIDs or other over-the-counter medicines?", "Nephrotoxin review"),
@@ -262,3 +269,40 @@ def _mock(extract: dict, question: str, urgency: str, answers: list[dict]) -> It
         time.sleep(0.03)
     yield {"type": "done", "mode": "mock", "model": None, "truncated": False,
            "input_tokens": 0, "output_tokens": 0}
+
+
+ROUTE_SCHEMA = {
+    "type": "object",
+    "properties": {"route": {"type": "string", "enum": ["nurse", "status"]}, "reply": {"type": "string"}},
+    "required": ["route", "reply"],
+    "additionalProperties": False,
+}
+
+
+def route_patient_message(facts: str, message: str) -> dict:
+    """Sorts a patient's tracker message: a status answer from the referral facts, or the nurse queue.
+
+    Returns {"route": "nurse"|"status", "reply"}; anything unexpected goes to the nurse.
+    """
+    nurse = {"route": "nurse", "reply": ""}
+    if not is_live():
+        return nurse
+    prompt = f"""You sort a patient's message about their specialist referral. Reply with JSON {{"route": "nurse" | "status", "reply": "..."}}.
+Use "nurse" for anything about symptoms, how the patient feels, medicines, doses, blood sugar, test results, side effects or what to do for their health, and for any message whose meaning is unclear. Do not answer those; leave reply empty.
+Use "status" only when the message is clearly about where the referral is or about scheduling. Answer in at most two plain sentences using only these facts, and never give medical advice:
+<facts>{facts}</facts>
+<message>{message}</message>"""
+    try:
+        response = anthropic.Anthropic().beta.messages.create(
+            model=MODEL, max_tokens=4000,
+            output_config={"effort": "low", "format": {"type": "json_schema", "schema": ROUTE_SCHEMA}},
+            messages=[{"role": "user", "content": prompt}], **FALLBACK,
+        )
+        if response.stop_reason in ("refusal", "max_tokens"):
+            return nurse
+        out = json.loads(next(b.text for b in response.content if b.type == "text"))
+    except (anthropic.APIStatusError, anthropic.APIConnectionError, ValueError, StopIteration):
+        return nurse
+    if out.get("route") != "status" or not out.get("reply", "").strip():
+        return nurse
+    return {"route": "status", "reply": out["reply"].strip()}

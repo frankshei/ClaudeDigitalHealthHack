@@ -247,7 +247,7 @@ dl.kv{display:grid;grid-template-columns:190px 1fr;gap:4px 12px;margin:6px 0} dl
 def _page(title: str, body: str, banner: str = "") -> str:
     return (f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>{_x(title)} | {PRODUCT}</title>"
             f"<meta name='viewport' content='width=device-width, initial-scale=1'><style>{CSS}</style></head><body>"
-            f"<div class='top'><b>{PRODUCT}</b><a href='/ehr'>Patient lookup</a>"
+            f"<div class='top'><b>{PRODUCT}</b><a href='/ehr'>Patient lookup</a><a href='/tracker'>Referral Tracker</a>"
             f"<span class='sp'></span><form action='/ehr' method='get'><input name='q' aria-label='Search patients' "
             f"placeholder='Search name or MRN'><button type='submit' style='display:none'>Search</button></form>"
             f"<span class='who'>Synthetic data (Synthea) · Training environment</span></div>{banner}{body}</body></html>")

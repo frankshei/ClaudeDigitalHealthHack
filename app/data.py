@@ -60,6 +60,37 @@ CONDITIONS = {
             "(retinopathy, neuropathy)."
         ),
     },
+    "endo": {
+        "label": "Type 2 diabetes (without kidney disease)",
+        "specialty": "Endocrinology",
+        "cohort": r"Diabetes mellitus type 2",
+        # Kidney disease goes to nephrology (the dkd condition), not here.
+        "exclude": r"kidney|renal|dialysis|transplant",
+        "related": r"diabet|glyc|obes|body mass index|metabolic syndrome|triglycerid|lipid|hypertension"
+                   r"|retinopathy|neuropathy|foot|ulcer|albuminuria|amputation",
+        "procedures": r"retina|eye|foot|diabet|glucose|ophthalm|slit lamp|gonioscopy|nutrition|educat",
+        "panel": {
+            "HbA1c (%)": ["4548-4"],
+            "Glucose (mg/dL)": ["2339-0", "2345-7"],
+            "LDL cholesterol (mg/dL)": ["18262-6"],
+            "Total cholesterol (mg/dL)": ["2093-3"],
+            "HDL cholesterol (mg/dL)": ["2085-9"],
+            "Triglycerides (mg/dL)": ["2571-8"],
+            "eGFR (mL/min/1.73m2)": ["33914-3"],
+            "Creatinine (mg/dL)": ["2160-0", "38483-4"],
+            "Urine albumin/creatinine ratio (mg/g)": ["14959-1"],
+            "Diabetic retinopathy severity, left eye": ["71490-7"],
+            "Diabetic retinopathy severity, right eye": ["71491-5"],
+        },
+        "guidance": (
+            "The endocrinologist will want: when type 2 diabetes was diagnosed, the HbA1c trend (first "
+            "and latest values with dates) and whether it is at goal, every glucose-lowering medication "
+            "tried with dates and why any were stopped, hypoglycemia, weight and BMI trend, blood pressure "
+            "and lipids, kidney function and urine albumin, complications (retinopathy, neuropathy, foot "
+            "problems), cardiovascular disease, and whether diabetes education or nutrition counseling has "
+            "happened."
+        ),
+    },
     "cardiac": {
         "label": "Ischemic heart disease / chronic heart failure",
         "specialty": "Cardiology",
@@ -193,7 +224,8 @@ class Chart:
                   if not c["STOP"] and re.search(CONDITIONS[key]["cohort"], c["DESCRIPTION"], re.I)]
         staged = sorted(a for a in set(active) if "stage" in a)
         parts = [staged[-1] if staged else sorted(set(active))[0]]
-        metric = {"dkd": ("eGFR", ["33914-3"]), "cardiac": ("LVEF", ["10230-1"]), "oa": ("BMI", ["39156-5"])}[key]
+        metric = {"dkd": ("eGFR", ["33914-3"]), "cardiac": ("LVEF", ["10230-1"]), "oa": ("BMI", ["39156-5"]),
+                  "endo": ("HbA1c", ["4548-4"])}[key]
         latest = self._latest(pid, metric[1])
         if latest:
             parts.append(f"{metric[0]} {_fmt(latest['VALUE'])}")

@@ -3,7 +3,7 @@
 A PCP picks a synthetic patient and a referral condition; the app builds a chart extract
 from Synthea data and asks Claude to draft the referral note for the specialist.
 
-Conditions: diabetic kidney disease (Nephrology), ischemic heart disease / heart failure
+Conditions: diabetic kidney disease (Nephrology), type 2 diabetes (Endocrinology), ischemic heart disease / heart failure
 (Cardiology), knee or hip osteoarthritis (Orthopedic surgery).
 
 ## Run
@@ -38,6 +38,20 @@ all 120 Synthea patients, for the operator agent to work in:
   recorded at it.
 - Plain links and GET forms only, so every screen has its own URL.
 
+## Referral Tracker
+
+http://localhost:8000/tracker: the team's Referral Tracker (PCP office, Endo office and
+patient views for a type 2 diabetes referral to endocrinology), served by this app.
+
+- Its patient data (`/tracker/data.json`) is built live from the same Synthea chart as the
+  EHR (the `endo` condition in `app/data.py`), and each referral links to the patient's
+  chart in the EHR.
+- "Draft with Claude" streams from `/api/referrals`, the same drafting endpoint as the
+  Referral Note Drafter. Patient messages are sorted by `/api/tracker/route-message`:
+  status questions get an answer from the referral facts, everything else goes to a nurse.
+- With no API key, drafts are labeled templates and every patient message goes to a nurse.
+- Demo state (days, referrals) is kept in the browser's localStorage; "Reset demo" clears it.
+
 ## Chart images
 
 `npm run charts` renders each patient's printed chart (`/ehr/patients/{id}/chart/{n}`)
@@ -55,8 +69,10 @@ encounter. Full lab history is in the EHR's Results tab, not in the images.
 - `app/data.py`: loads the Synthea CSVs, defines the three cohorts, builds the chart extract.
   Per-condition labs, relevance rules and specialist guidance live in `CONDITIONS`.
 - `app/ehr.py`: the mock EHR screens and the paged printed chart.
+- `app/tracker.py`: serves the Referral Tracker and builds its data.
 - `app/llm.py`: system prompt and the Claude API call (streaming).
 - `app/main.py`: HTTP API. `POST /api/referrals` streams newline-delimited JSON events.
 - `scripts/charts.js`: renders the chart PNGs with Playwright.
+- `static/tracker/index.html`: the Referral Tracker page.
 - `static/index.html`: the PCP-facing page.
 - `data/synthea/`: Synthea sample export (120 synthetic patients, no real patient data).
