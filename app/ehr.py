@@ -7,6 +7,7 @@ URL, by clicking, or by reading the screen. Each patient also has a paged "print
 from __future__ import annotations
 
 import contextvars
+import os
 import math
 import re
 from collections import defaultdict
@@ -695,7 +696,10 @@ def build_router(chart: Chart, store: Store | None = None) -> APIRouter:
         if specialty not in SPECIALTIES or urgency not in URGENCIES:
             return back(f"/ehr/patients/{pid}/referrals", err="Choose a specialty and urgency.")
         busy = runs.active()
-        rid = runs.start(pid, h["mrn"], specialty, urgency, question.strip(), str(request.base_url).rstrip("/"))
+        # Fable drives the EHR on this machine directly, even when this page came in through a tunnel
+        # (ngrok) whose address and password the operator's browser would not get past.
+        local = os.environ.get("EHR_URL") or f"http://localhost:{os.environ.get('PORT', '8000')}"
+        rid = runs.start(pid, h["mrn"], specialty, urgency, question.strip(), local.rstrip("/"))
         return back(f"/ehr/fable/{rid}", msg="Fable is already running; this is that run." if busy else "")
 
     @r.get("/ehr/fable/{rid}/log")
