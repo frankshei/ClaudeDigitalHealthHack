@@ -43,6 +43,7 @@ MAX_TURNS = int(os.environ.get("OPERATOR_MAX_TURNS", "40"))
 BETAS = ["server-side-fallback-2026-07-01", "thinking-display-updates-2026-08-18"]
 NOT_EXECUTED = "Not executed: an earlier computer action in this turn failed."
 # Requests the operator may never make, whatever it decides: these would let it act as a person.
+# It may not start another Fable run either (POST /ehr/patients/<id>/fable, blocked below).
 BLOCKED_POSTS = ("/ehr/login", "/ehr/logout", "/ehr/inbox/", "/ehr/admin/")
 
 
@@ -280,7 +281,7 @@ Patient MRN: {mrn}
 
         def guard(route, request):
             path = urlparse(request.url).path
-            if request.method == "POST" and path.startswith(BLOCKED_POSTS):
+            if request.method == "POST" and (path.startswith(BLOCKED_POSTS) or path.endswith("/fable")):
                 log("blocked", f"POST {path}: the operator may not do this")
                 return route.fulfill(status=403, content_type="text/html",
                                      body="<h1>Blocked</h1><p>The Fable operator may not sign in or out, approve, reject or reset.</p>")

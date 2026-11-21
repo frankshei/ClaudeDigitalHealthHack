@@ -25,6 +25,14 @@ what to click. Press Ctrl+C when you're finished. Options: `--mrn <MRN>`, `--spe
 
 The sections below are the same steps done by hand.
 
+## One-click run from the EHR
+
+With the app running (`npm run dev`), sign in as Dana at http://localhost:8000/ehr/login, open a
+patient, go to the **Referrals** tab and press **Run Fable** under "Have Fable do it". A run page
+shows Fable's progress live while the browser window it drives opens on your screen. When it's done,
+the page links to the In basket to approve. One run at a time; the Fable operator itself can't
+start a run.
+
 ## Quick start
 
 You need Node.js, Python 3.9 or newer, and a Claude API key. Run these from the repo folder.

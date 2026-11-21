@@ -16,9 +16,10 @@ from typing import Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from .data import Chart, _clean, _d, _fmt
+from .fable_runs import Runs
 from .ehr_store import DOC_KINDS, SPECIALTIES, URGENCIES, USERS, NotAllowed, Store
 
 PRODUCT = "Harborview EHR"
@@ -347,6 +348,7 @@ def build_router(chart: Chart, store: Store | None = None) -> APIRouter:
     global STORE
     ehr = EHR(chart)
     STORE = store = store or Store()
+    runs = Runs()
     r = APIRouter(dependencies=[Depends(_signed_in)])
 
     def need(pid: str) -> dict:
@@ -627,7 +629,17 @@ def build_router(chart: Chart, store: Store | None = None) -> APIRouter:
                 f"<label for='reason'>Reason for referral <span class='hint'>(optional: history and workup to date)</span></label>"
                 f"<textarea id='reason' name='reason'></textarea>"
                 f"<div class='actions'><button class='btn' type='submit'>Submit referral order</button></div></form>") if signed else ""
-        content = (_flash(request) + who_note(pid, "referrals")
+        person = signed and USERS[CURRENT_USER.get()]["role"] != "agent"
+        fable = (f"<form class='entry' method='post' action='/ehr/patients/{pid}/fable' id='run-fable'>"
+                 f"<h2 style='margin-top:6px'>Have Fable do it</h2>"
+                 f"<p class='muted' style='margin:0'>Fable reads this chart, drafts the referral, then places the order "
+                 f"and files the letter in a browser window you can watch. Both wait for approval in the In basket.</p>"
+                 f"<label for='f-specialty'>Refer to</label><select id='f-specialty' name='specialty'>{opts(SPECIALTIES)}</select>"
+                 f"<label for='f-urgency'>Urgency</label><select id='f-urgency' name='urgency'>{opts(URGENCIES)}</select>"
+                 f"<label for='f-question'>Clinical question <span class='hint'>(optional: Fable suggests one if blank)</span></label>"
+                 f"<input id='f-question' name='question'>"
+                 f"<div class='actions'><button class='btn' type='submit'>Run Fable</button></div></form>") if person else ""
+        content = (_flash(request) + who_note(pid, "referrals") + fable
                    + _table(["Order", "Entered", "Specialty", "Urgency", "Clinical question", "Status", "Entered by", "Decided by"],
                             rows, dates={0, 1}, empty="No referral orders on this chart.") + form)
         return chart_page(h, "referrals", "Referral orders", content)
@@ -670,6 +682,59 @@ def build_router(chart: Chart, store: Store | None = None) -> APIRouter:
         return chart_page(h, "referrals", f"Referral order R-{rid}", content)
 
     # ---- documents ------------------------------------------------------------------
+
+    # ---- one-click Fable run -------------------------------------------------------
+
+    @r.post("/ehr/patients/{pid}/fable")
+    def fable_start(pid: str, request: Request, specialty: str = Form(...), urgency: str = Form(...),
+                    question: str = Form("")):
+        h = need(pid)
+        uid = CURRENT_USER.get()
+        if uid not in USERS or USERS[uid]["role"] == "agent":
+            return back(f"/ehr/patients/{pid}/referrals", err="Sign in as Dana or Dr. Patel to run Fable.")
+        if specialty not in SPECIALTIES or urgency not in URGENCIES:
+            return back(f"/ehr/patients/{pid}/referrals", err="Choose a specialty and urgency.")
+        busy = runs.active()
+        rid = runs.start(pid, h["mrn"], specialty, urgency, question.strip(), str(request.base_url).rstrip("/"))
+        return back(f"/ehr/fable/{rid}", msg="Fable is already running; this is that run." if busy else "")
+
+    @r.get("/ehr/fable/{rid}/log")
+    def fable_log(rid: int):
+        run = runs.get(rid)
+        if not run:
+            raise HTTPException(404, "Unknown run")
+        return JSONResponse({"status": run["status"], "text": run["text"]})
+
+    @r.get("/ehr/fable/{rid}", response_class=HTMLResponse)
+    def fable_run(rid: int, request: Request):
+        run = runs.get(rid)
+        if not run:
+            raise HTTPException(404, "Unknown run")
+        h = need(run["pid"])
+        body = (_flash(request)
+                + f"<p>Started {run['started']} for <b>{_x(h['name'])}</b> (MRN {h['mrn']}), referring to {_x(run['specialty'])}. "
+                  f"<b id='st'></b></p>"
+                + "<p class='muted'>For about a minute Fable reads the chart images. Then a browser window opens and Fable "
+                  "works the EHR in it: watch, but don't click in that window.</p>"
+                + "<p id='next' style='display:none'><a class='btn' href='/ehr/inbox'>Open the In basket to approve</a> "
+                  f"<a href='/ehr/patients/{run['pid']}/referrals'>Back to the chart</a> · <a href='/tracker'>Referral Tracker</a></p>"
+                + f"<pre id='log' style='background:#0f1b2b;color:#dfe8f3;padding:10px 12px;border-radius:4px;"
+                  f"max-height:60vh;overflow:auto;white-space:pre-wrap;font-size:12px'>{_x(run['text'])}</pre>"
+                + f"""<script>
+const LABEL = {{running: "Running…", finished: "Done. Fable's entries are waiting in the In basket.",
+               failed: "Stopped with an error; see the end of the log."}};
+async function tick() {{
+  try {{
+    const r = await (await fetch("/ehr/fable/{rid}/log")).json();
+    const el = document.getElementById("log"), atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+    el.textContent = r.text; if (atEnd) el.scrollTop = el.scrollHeight;
+    document.getElementById("st").textContent = LABEL[r.status];
+    if (r.status === "running") setTimeout(tick, 1500); else document.getElementById("next").style.display = "";
+  }} catch (e) {{ setTimeout(tick, 3000); }}
+}}
+tick();
+</script>""")
+        return HTMLResponse(_page(f"Fable run {rid}", f"<div class='wrap'><main><h1>Fable run {rid}</h1>{body}</main></div>"))
 
     @r.get("/ehr/patients/{pid}/documents", response_class=HTMLResponse)
     def documents(pid: str, request: Request, referral: Optional[int] = None):
