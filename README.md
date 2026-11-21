@@ -8,14 +8,17 @@ Conditions: diabetic kidney disease (Nephrology), ischemic heart disease / heart
 
 ## Run
 
+Needs Python 3.10+ and Node.js (Node is only used to run the scripts).
+
 ```
-.venv\Scripts\python -m uvicorn app.main:app --reload
+npm install     # creates .venv and installs the Python packages
+npm run dev     # starts the server with reload
 ```
 
-Open http://localhost:8000.
+Open http://localhost:8000. To use another port: set the `PORT` environment variable.
 
-First time on a new machine: `python -m venv .venv`, then
-`.venv\Scripts\python -m pip install -r requirements.txt`.
+The flow: **Draft note** writes the note from the chart, Claude then asks follow-up
+questions about the draft, and **Update note with answers** revises it.
 
 ## Going live
 
