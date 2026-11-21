@@ -1,4 +1,71 @@
-# Referral note drafting (hackathon prototype)
+# Referrals with Claude Fable 5.2 (hackathon prototype)
+
+A referral system built on a mock EHR, with synthetic patients only:
+
+- **Harborview EHR** (mock): a traditional EHR over 120 synthetic Synthea patients.
+- **Fable operator**: Claude Fable 5.2 reads a patient's chart *as images*, drafts the referral,
+  then works the EHR *by computer use* (screenshots, clicks, typing) to place the order and file
+  the letter. Everything it enters waits for a person to approve.
+- **Referral Tracker**: PCP office, specialist office and patient views of a referral.
+- **Referral note drafter**: the original drafting page.
+
+## Quick start
+
+You need Node.js, Python 3.10 or newer, and a Claude API key.
+
+```
+git checkout main && git pull
+npm install                           # creates .venv and installs the Python packages
+.venv/bin/playwright install chromium # once: the browser the operator drives (Windows: .venv\Scripts\playwright)
+cp .env.example .env                  # then put your key after ANTHROPIC_API_KEY= (.env is not committed)
+npm run dev                           # starts the app at http://localhost:8000
+```
+
+## Demo run-through
+
+1. **Start the app** (terminal 1): `npm run dev`
+2. **Run the Fable operator** (terminal 2), with the browser visible:
+
+   ```
+   npm run operator -- --mrn 76920746 --specialty Endocrinology --question "Next step in glucose-lowering treatment?" --headed
+   ```
+
+   - First Fable reads the patient's chart page images and prints the drafted referral
+     (about a minute, no browser yet).
+   - Then a browser window opens and Fable searches the MRN, places the referral order and
+     files the referral letter. Don't click in that window while it works.
+   - The terminal narrates each step: `fable` (its progress notes), `action` (each click or
+     keystroke), `blocked` / `error` (anything the guard stopped).
+3. **Approve as a person**: open http://localhost:8000/ehr/login, choose **Sign in as Dana**,
+   then open the **In basket** (http://localhost:8000/ehr/inbox) and approve both items.
+4. **Show the history**: the **Audit log** (http://localhost:8000/ehr/audit) shows what Fable
+   proposed and what Dana approved.
+5. **Run it again**: on the audit log page, signed in as Dana, click **Reset demo data**.
+
+To see only the chart reading and the drafted referral: `npm run operator -- --mrn 76920746 --read-only`.
+Any patient works: find MRNs in the EHR's Patient lookup.
+
+## Where things are
+
+| Page | URL |
+|---|---|
+| EHR patient lookup | http://localhost:8000/ehr |
+| EHR sign-in (Fable operator, Dana, Dr. Patel) | http://localhost:8000/ehr/login |
+| In basket (waiting for approval) | http://localhost:8000/ehr/inbox |
+| Audit log | http://localhost:8000/ehr/audit |
+| Referral Tracker | http://localhost:8000/tracker |
+| Referral note drafter | http://localhost:8000 |
+
+## Status
+
+- Works: the EHR, chart images, EHR write-back with approval, the tracker, and the operator,
+  tested with scripted actions against the real EHR.
+- Not yet tried with the live model: the operator's computer-use phase with Fable 5.2 itself.
+  If a run stumbles, keep the terminal output.
+- Not connected yet: a referral the operator places in the EHR does not appear in the Referral
+  Tracker; the tracker still runs its own demo referrals.
+
+## Referral note drafter
 
 A PCP picks a synthetic patient and a referral condition; the app builds a chart extract
 from Synthea data and asks Claude to draft the referral note for the specialist.
@@ -109,7 +176,7 @@ encounter. Full lab history is in the EHR's Results tab, not in the images.
 
 ## Layout
 
-- `app/data.py`: loads the Synthea CSVs, defines the three cohorts, builds the chart extract.
+- `app/data.py`: loads the Synthea CSVs, defines the four referral conditions, builds the chart extract.
   Per-condition labs, relevance rules and specialist guidance live in `CONDITIONS`.
 - `app/ehr.py`: the mock EHR screens and the paged printed chart.
 - `app/tracker.py`: serves the Referral Tracker and builds its data.
