@@ -52,6 +52,11 @@ function openBrowser(url) {
   } else {
     run(python, ["-m", "pip", "install", "--quiet", "--disable-pip-version-check", "-r", "requirements.txt"]);
   }
+  // The operator renders the chart images with scripts/charts.js, which needs Node's Playwright.
+  if (!fs.existsSync(path.join(root, "node_modules", "playwright"))) {
+    say("Installing the Node packages (once)");
+    if (!run(win ? "npm.cmd" : "npm", ["install", "--no-audit", "--no-fund"])) fail("npm install failed.");
+  }
   if (!fs.existsSync(path.join(root, ".env"))) fs.copyFileSync(path.join(root, ".env.example"), path.join(root, ".env"));
   if (!hasKey()) {
     fail(`No API key yet. Open this file:\n\n   ${path.join(root, ".env")}\n\n` +
