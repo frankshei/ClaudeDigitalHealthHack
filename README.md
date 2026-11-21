@@ -11,15 +11,42 @@ A referral system built on a mock EHR, with synthetic patients only:
 
 ## Quick start
 
-You need Node.js, Python 3.10 or newer, and a Claude API key.
+You need Node.js, Python 3.10 or newer, and a Claude API key. Run these from the repo folder.
+
+**Once**, to set up:
+
+1. Get the latest code:
+
+   ```
+   git checkout main && git pull
+   ```
+
+2. Install everything (creates `.venv` with the Python packages):
+
+   ```
+   npm install
+   ```
+
+3. Install the browser the Fable operator drives (on Windows: `.venv\Scripts\playwright install chromium`):
+
+   ```
+   .venv/bin/playwright install chromium
+   ```
+
+4. Add your API key: if there is no `.env` file yet, create one from the example, then open it
+   and put your key after `ANTHROPIC_API_KEY=`. `.env` is never committed.
+
+   ```
+   cp -n .env.example .env
+   ```
+
+**Every time**, start the app and leave it running:
 
 ```
-git checkout main && git pull
-npm install                           # creates .venv and installs the Python packages
-.venv/bin/playwright install chromium # once: the browser the operator drives (Windows: .venv\Scripts\playwright)
-cp .env.example .env                  # then put your key after ANTHROPIC_API_KEY= (.env is not committed)
-npm run dev                           # starts the app at http://localhost:8000
+npm run dev
 ```
+
+Then open http://localhost:8000/ehr. If you pull new code later, run `npm install` again.
 
 ## Demo run-through
 
