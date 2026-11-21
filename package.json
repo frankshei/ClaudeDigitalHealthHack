@@ -8,6 +8,7 @@
     "setup": "node scripts/py.js setup",
     "dev": "node scripts/py.js dev",
     "charts": "node scripts/charts.js",
-    "operator": "node scripts/py.js operator"
+    "operator": "node scripts/py.js operator",
+    "demo": "node scripts/demo.js"
   }
 }

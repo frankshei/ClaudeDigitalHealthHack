@@ -9,6 +9,22 @@ A referral system built on a mock EHR, with synthetic patients only:
 - **Referral Tracker**: PCP office, specialist office and patient views of a referral.
 - **Referral note drafter**: the original drafting page.
 
+## The demo in one command
+
+With Node.js and Python 3.10+ installed, and your Claude API key in `.env`
+(`ANTHROPIC_API_KEY=...`), from the repo folder:
+
+```
+npm run demo
+```
+
+It sets up whatever is missing, starts the app, clears earlier demo entries, runs Fable with
+the browser visible, then opens your browser so you can approve as Dana. Its last lines tell you
+what to click. Press Ctrl+C when you're finished. Options: `--mrn <MRN>`, `--specialty`,
+`--urgency`, `--question "..."`, `--keep` (don't clear earlier entries), `--hide-browser`.
+
+The sections below are the same steps done by hand.
+
 ## Quick start
 
 You need Node.js, Python 3.10 or newer, and a Claude API key. Run these from the repo folder.

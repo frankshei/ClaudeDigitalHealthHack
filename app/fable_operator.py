@@ -368,10 +368,21 @@ def main() -> None:
     ap.add_argument("--read-only", action="store_true", help="Only read the chart and print the draft")
     a = ap.parse_args()
     client = anthropic.Anthropic()
-    draft = read_chart(client, a.mrn, a.specialty, a.urgency, a.question)
-    print(json.dumps(draft, indent=2))
-    if not a.read_only:
-        operate(client, a.mrn, draft, a.headed)
+    try:
+        draft = read_chart(client, a.mrn, a.specialty, a.urgency, a.question)
+        print(json.dumps(draft, indent=2))
+        if not a.read_only:
+            operate(client, a.mrn, draft, a.headed)
+    except anthropic.AuthenticationError:
+        sys.exit("The API key was rejected. Check ANTHROPIC_API_KEY in .env.")
+    except anthropic.PermissionDeniedError as e:
+        sys.exit(f"This API key cannot use {MODEL}: {e.message}")
+    except anthropic.RateLimitError:
+        sys.exit("Rate limited by the API. Wait a minute and run it again.")
+    except anthropic.APIStatusError as e:
+        sys.exit(f"API error {e.status_code}: {e.message}")
+    except anthropic.APIConnectionError:
+        sys.exit("Could not reach the Claude API. Check the network connection.")
 
 
 if __name__ == "__main__":
